@@ -1,3 +1,5 @@
+from itertools import permutations
+import time
 from src.strategies import Strategy
 from src.piece import Piece
 
@@ -162,3 +164,145 @@ class CompareAllMovesWeightingDistanceAndSinglesWithEndGame2(CompareAllMoves):
 
         return board_value
 
+class CompareAllMovesMinMax(Strategy):
+
+    @staticmethod
+    def get_difficulty():
+        return "MinMax"
+
+    def __init__(self, depth=3, time_limit=5):
+        super().__init__()
+        self.MAX_DEPTH = depth
+        self.time_limit = time_limit - 0.5
+        self.weights = {
+            'sum_distances': -0.5,
+            'number_of_singles': -3.0,
+            'number_of_safe_zones': 2.0,
+            'opponents_taken_pieces': 5.0,
+            'sum_distances_opponent': 0.5,
+        }
+
+    def evaluate_board(self, myboard, colour):
+        board_stats = self.assess_board(colour, myboard)
+        return sum(board_stats[key] * self.weights.get(key, 0) for key in board_stats)
+
+    def assess_board(self, colour, myboard):
+        pieces = myboard.get_pieces(colour)
+        sum_distances = sum(piece.spaces_to_home() for piece in pieces)
+        number_of_singles = sum(1 for loc in range(1, 25) if len(myboard.pieces_at(loc)) == 1)
+        number_of_safe_zones = sum(1 for loc in range(1, 25) if len(myboard.pieces_at(loc)) > 1)
+        opponents_taken_pieces = len(myboard.get_taken_pieces(colour.other()))
+        sum_distances_opponent = sum(piece.spaces_to_home() for piece in myboard.get_pieces(colour.other()))
+        return {
+            'sum_distances': sum_distances,
+            'number_of_singles': number_of_singles,
+            'number_of_safe_zones': number_of_safe_zones,
+            'opponents_taken_pieces': opponents_taken_pieces,
+            'sum_distances_opponent': sum_distances_opponent,
+        }
+
+    def move(self, board, colour, dice_rolls, make_move, opponents_activity):
+        if board.has_game_ended():
+            return
+
+        print(f"AI turn: Colour={colour}, Dice Rolls={dice_rolls}")
+
+        best_score = float('-inf')
+        optimal_move = []
+
+        possible_boards_with_moves = self.generate_boards(board, colour, dice_rolls)
+
+        if not possible_boards_with_moves:
+            print("No valid moves.")
+            return
+
+        start_time = time.time()
+
+        for b, moves in possible_boards_with_moves.items():
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= self.time_limit:
+                print(f"Time limit reached. Using best move so far: {optimal_move}")
+                break
+
+            score_for_board_state = self.expectiminimax(b, colour, self.MAX_DEPTH, True, start_time)
+
+            print(f"Evaluated Board Score: {score_for_board_state} for Moves: {moves}")
+
+            if score_for_board_state > best_score:
+                best_score = score_for_board_state
+                optimal_move = moves
+
+        print(f"AI move: Best Score={best_score}, Moves={optimal_move}")
+
+        if optimal_move:
+            for move in optimal_move:
+                make_move(move['piece_at'], move['die_roll'])
+        else:
+            print("No optimal move found.")
+
+    def generate_boards(self, board, colour, dice_rolls):
+        if not dice_rolls:
+            return {board: []}
+
+        location_of_pieces = list(set(x.location for x in board.get_pieces(colour)))
+        player_pieces = [board.get_piece_at(loc) for loc in location_of_pieces]
+
+        resulting_boards = {}
+
+        for dice_order in permutations(dice_rolls):
+            die_roll = dice_order[0]
+            remaining_die_rolls = dice_order[1:]
+
+            for piece in player_pieces:
+                if board.is_move_possible(piece, die_roll):
+                    board_copy = board.create_copy()
+                    new_piece = board_copy.get_piece_at(piece.location)
+                    board_copy.move_piece(new_piece, die_roll)
+
+                    subsequent_boards = self.generate_boards(board_copy, colour, remaining_die_rolls)
+                    for new_board, moves in subsequent_boards.items():
+                        resulting_boards[new_board] = [{'piece_at': piece.location, 'die_roll': die_roll}] + moves
+
+        return resulting_boards
+
+    def generate_dice_rolls(self):
+        dice_rolls = []
+
+        for d1 in range(1, 7):
+            for d2 in range(d1, 7):
+                probability = 1 / 36 if d1 == d2 else 1 / 18
+                dice_rolls.append(((d1, d2), probability))
+
+        return dice_rolls
+
+    def expectiminimax(self, board, colour, depth, is_maximizing_player, start_time):
+        elapsed_time = time.time() - start_time
+        remaining_time = self.time_limit - elapsed_time
+
+        if remaining_time <= 0 or depth == 0:
+            return self.evaluate_board(board, colour)
+
+        all_combinations = self.generate_dice_rolls()
+        best_score = float('-inf') if is_maximizing_player else float('inf')
+
+        for (d1, d2), prob in all_combinations:
+            possible_boards = self.generate_boards(
+                board, colour if is_maximizing_player else colour.other(), [d1, d2]
+            )
+
+            for b, _ in possible_boards.items():
+                elapsed_time = time.time() - start_time
+                if elapsed_time >= self.time_limit:
+                    return best_score  # Return the best score computed so far
+
+                score = self.expectiminimax(
+                    b, colour, depth - 1, not is_maximizing_player, start_time
+                )
+                weighted_score = prob * score
+
+                if is_maximizing_player:
+                    best_score = max(best_score, weighted_score)
+                else:
+                    best_score = min(best_score, weighted_score)
+
+        return best_score
