@@ -1,5 +1,4 @@
 from random import randint
-
 from src.colour import Colour
 from src.game import Game
 from src.strategy_factory import StrategyFactory
@@ -14,14 +13,14 @@ if __name__ == '__main__':
         print("[%d] %s (%s)" % (i, strategy.__name__, strategy.get_difficulty()))
 
     strategy_index = int(input('Pick a strategy:\n'))
-
-    chosen_strategy = StrategyFactory.create_by_name(strategies[strategy_index].__name__)
-
+    
     time_limit = input("Enter time limit in seconds (or 'inf' for no limit): ")
     if time_limit.lower() == 'inf':
         time_limit = -1
     else:
         time_limit = int(time_limit)
+
+    chosen_strategy = StrategyFactory.create_by_name(strategies[strategy_index].__name__,time_limit)
 
     game = Game(
         white_strategy=HumanStrategy(name),
